@@ -29,6 +29,8 @@ public:
         GaussianGen& transSampler,
         GaussianGen& rotSampler,
         double info_thres=0.1);
+    void saveLCtoText(SubmapObj& submap_i, ofstream& fileOutputStream);
+    SubmapObj loadLCFromFile();
 };
 
 

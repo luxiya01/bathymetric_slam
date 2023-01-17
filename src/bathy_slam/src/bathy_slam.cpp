@@ -10,6 +10,16 @@ BathySlam::~BathySlam(){
 
 }
 
+void BathySlam::saveLCtoText(SubmapObj& submap_i, ofstream& fileOutputStream) {
+    if(fileOutputStream.is_open()){
+        fileOutputStream << submap_i.submap_id_;
+        for(unsigned int j=0; j<submap_i.overlaps_idx_.size(); j++){
+            fileOutputStream << " " << submap_i.overlaps_idx_.at(j);
+        }
+        fileOutputStream << "\n";
+    }
+}
+
 SubmapObj BathySlam::findLoopClosureByCombiningOverlappingSubmaps(
     SubmapObj& submap_i,
     ofstream& fileOutputStream,
@@ -25,15 +35,8 @@ SubmapObj BathySlam::findLoopClosureByCombiningOverlappingSubmaps(
     SubmapObj submap_final = submap_i;
 
     if(!submap_i.overlaps_idx_.empty()){
-
         // Save loop closure to txt
-        if(fileOutputStream.is_open()){
-            fileOutputStream << submap_i.submap_id_;
-            for(unsigned int j=0; j<submap_i.overlaps_idx_.size(); j++){
-                fileOutputStream << " " << submap_i.overlaps_idx_.at(j);
-            }
-            fileOutputStream << "\n";
-        }
+        saveLCtoText(submap_i, fileOutputStream);
 
         // Register overlapping submaps
         submap_trg = gicp_reg_->constructTrgSubmap(submaps_reg, submap_i.overlaps_idx_, dr_noise);
@@ -51,6 +54,10 @@ SubmapObj BathySlam::findLoopClosureByCombiningOverlappingSubmaps(
         graph_obj_->findLoopClosures(submap_final, submaps_reg, info_thres);
     }
     return submap_final;
+}
+
+SubmapObj BathySlam::loadLCFromFile() {
+
 }
 
 SubmapsVec BathySlam::runOffline(SubmapsVec& submaps_gt, GaussianGen& transSampler, GaussianGen& rotSampler, YAML::Node config){
@@ -95,9 +102,14 @@ SubmapsVec BathySlam::runOffline(SubmapsVec& submaps_gt, GaussianGen& transSampl
             graph_obj_->createDREdge(submap_i);
         }
 
-        SubmapObj submap_final = findLoopClosureByCombiningOverlappingSubmaps(
-            submap_i, fileOutputStream, submap_trg, submaps_reg,
-            dr_noise, config, transSampler, rotSampler);
+        SubmapObj submap_final(dr_noise);
+        if (config["load_offline_LC"].as<bool>()) {
+            submap_final = submap_i;
+        } else {
+            submap_final = findLoopClosureByCombiningOverlappingSubmaps(
+                submap_i, fileOutputStream, submap_trg, submaps_reg,
+                dr_noise, config, transSampler, rotSampler);
+        }
         submaps_reg.push_back(submap_final);    // Add registered submap_i
 
     #if INTERACTIVE == 1
