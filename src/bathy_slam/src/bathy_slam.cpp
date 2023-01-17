@@ -10,6 +10,49 @@ BathySlam::~BathySlam(){
 
 }
 
+SubmapObj BathySlam::findLoopClosureByCombiningOverlappingSubmaps(
+    SubmapObj& submap_i,
+    ofstream& fileOutputStream,
+    SubmapObj& submap_trg,
+    SubmapsVec& submaps_reg,
+    DRNoise& dr_noise,
+    YAML::Node& config,
+    GaussianGen& transSampler,
+    GaussianGen& rotSampler,
+    double info_thres
+    ) {
+    // If potential loop closure detected
+    SubmapObj submap_final = submap_i;
+
+    if(!submap_i.overlaps_idx_.empty()){
+
+        // Save loop closure to txt
+        if(fileOutputStream.is_open()){
+            fileOutputStream << submap_i.submap_id_;
+            for(unsigned int j=0; j<submap_i.overlaps_idx_.size(); j++){
+                fileOutputStream << " " << submap_i.overlaps_idx_.at(j);
+            }
+            fileOutputStream << "\n";
+        }
+
+        // Register overlapping submaps
+        submap_trg = gicp_reg_->constructTrgSubmap(submaps_reg, submap_i.overlaps_idx_, dr_noise);
+        if (config["add_gaussian_noise"].as<bool>()) {
+            addNoiseToSubmap(transSampler, rotSampler, submap_i); // Add disturbance to source submap
+        }
+
+        if(gicp_reg_->gicpSubmapRegistration(submap_trg, submap_i)){
+            submap_final = submap_i;
+        }
+        submap_trg.submap_pcl_.clear();
+
+        // Create loop closures
+        graph_obj_->edge_covs_type_ = config["lc_edge_covs_type"].as<int>();
+        graph_obj_->findLoopClosures(submap_final, submaps_reg, info_thres);
+    }
+    return submap_final;
+}
+
 SubmapsVec BathySlam::runOffline(SubmapsVec& submaps_gt, GaussianGen& transSampler, GaussianGen& rotSampler, YAML::Node config){
     DRNoise dr_noise = loadDRNoiseFromFile(config);
     SubmapObj submap_trg(dr_noise);
@@ -17,7 +60,6 @@ SubmapsVec BathySlam::runOffline(SubmapsVec& submaps_gt, GaussianGen& transSampl
     ofstream fileOutputStream;
     fileOutputStream.open("loop_closures.txt", std::ofstream::out);
 
-    double info_thres = 0.1;
     for(SubmapObj& submap_i: submaps_gt){
         std::cout << " ----------- Submap " << submap_i.submap_id_ << ", swath "
                   << submap_i.swath_id_ << " ------------"<< std::endl;
@@ -29,10 +71,10 @@ SubmapsVec BathySlam::runOffline(SubmapsVec& submaps_gt, GaussianGen& transSampl
                 submaps_prev.push_back(submap_k);
             }
         }
-	// Submaps in map_frame?
-	bool submaps_in_map_tf = true;
-        submap_i.findOverlaps(submaps_in_map_tf, submaps_prev, config["overlap_coverage"].as<double>());
-        submaps_prev.clear();
+        // Submaps in map_frame?
+        bool submaps_in_map_tf = true;
+            submap_i.findOverlaps(submaps_in_map_tf, submaps_prev, config["overlap_coverage"].as<double>());
+            submaps_prev.clear();
 
     #if INTERACTIVE == 1
         // Update visualizer
@@ -53,33 +95,9 @@ SubmapsVec BathySlam::runOffline(SubmapsVec& submaps_gt, GaussianGen& transSampl
             graph_obj_->createDREdge(submap_i);
         }
 
-        // If potential loop closure detected
-        SubmapObj submap_final = submap_i;
-        if(!submap_i.overlaps_idx_.empty()){
-            // Save loop closure to txt
-            if(fileOutputStream.is_open()){
-                fileOutputStream << submap_i.submap_id_;
-                for(unsigned int j=0; j<submap_i.overlaps_idx_.size(); j++){
-                    fileOutputStream << " " << submap_i.overlaps_idx_.at(j);
-                }
-                fileOutputStream << "\n";
-            }
-
-            // Register overlapping submaps
-            submap_trg = gicp_reg_->constructTrgSubmap(submaps_reg, submap_i.overlaps_idx_, dr_noise);
-            if (config["add_gaussian_noise"].as<bool>()) {
-                addNoiseToSubmap(transSampler, rotSampler, submap_i); // Add disturbance to source submap
-            }
-
-            if(gicp_reg_->gicpSubmapRegistration(submap_trg, submap_i)){
-                submap_final = submap_i;
-            }
-            submap_trg.submap_pcl_.clear();
-
-            // Create loop closures
-            graph_obj_->edge_covs_type_ = config["lc_edge_covs_type"].as<int>();
-            graph_obj_->findLoopClosures(submap_final, submaps_reg, info_thres);
-        }
+        SubmapObj submap_final = findLoopClosureByCombiningOverlappingSubmaps(
+            submap_i, fileOutputStream, submap_trg, submaps_reg,
+            dr_noise, config, transSampler, rotSampler);
         submaps_reg.push_back(submap_final);    // Add registered submap_i
 
     #if INTERACTIVE == 1

@@ -19,6 +19,16 @@ public:
     ~BathySlam();
 
     SubmapsVec runOffline(SubmapsVec &submaps_gt, GaussianGen &transSampler, GaussianGen &rotSampler, YAML::Node config);
+    SubmapObj findLoopClosureByCombiningOverlappingSubmaps(
+        SubmapObj& submap_i,
+        ofstream& fileOutputStream,
+        SubmapObj& submap_trg,
+        SubmapsVec& submaps_reg,
+        DRNoise& dr_noise,
+        YAML::Node& config,
+        GaussianGen& transSampler,
+        GaussianGen& rotSampler,
+        double info_thres=0.1);
 };
 
 

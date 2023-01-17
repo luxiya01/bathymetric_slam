@@ -36,7 +36,7 @@
 #include <pcl/filters/voxel_grid.h>
 
 #define INTERACTIVE 0
-#define VISUAL 0
+#define VISUAL 1
 
 using namespace Eigen;
 using namespace std;
