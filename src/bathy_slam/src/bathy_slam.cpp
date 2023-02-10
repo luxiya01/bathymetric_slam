@@ -1,6 +1,5 @@
 #include "bathy_slam/bathy_slam.hpp"
 
-
 BathySlam::BathySlam(GraphConstructor &graph_obj, SubmapRegistration &gicp_reg):
     graph_obj_(&graph_obj), gicp_reg_(&gicp_reg){
 
@@ -56,8 +55,47 @@ SubmapObj BathySlam::findLoopClosureByCombiningOverlappingSubmaps(
     return submap_final;
 }
 
-SubmapObj BathySlam::loadLCFromFile() {
+Isometry3f BathySlam::loadLCFromFile(SubmapObj& submap, const string& filepath, const YAML::Node& config) {
+    YAML::Node lc_file;
+    Isometry3f identity = Isometry3f::Identity();
 
+    try {
+        lc_file = YAML::LoadFile(filepath);
+    } catch (const std::exception& e) {
+        cerr << "Failed to load LC file: " << filepath << endl;
+        cerr << e.what() << endl;
+        return identity;
+    }
+
+    // Do not transform the submap if the final RMS is larger than the given threshold
+    double final_rms_error = lc_file["rms_error"]["final"].as<double>();
+    if (final_rms_error >= config["offline_LC_max_rms"].as<double>()) {
+        cout << "Ignore LC with large rms_error " << final_rms_error << ": " << filepath << endl;
+        return identity;
+    }
+    auto tf = lc_file["transform"].as<std::vector<float>>();
+    Matrix4f transform = Eigen::Map<Eigen::Matrix4f>(tf.data());
+    Isometry3f rel_tf = Isometry3f (Isometry3f(Translation3f(transform.block<3,1>(0,3)))*
+                                    Isometry3f(Quaternionf(transform.block<3,3>(0,0)).normalized()));
+
+
+    submap.submap_tf_ = rel_tf * submap.submap_tf_;
+    pcl::transformPointCloud(submap.submap_pcl_, submap.submap_pcl_, rel_tf);
+
+    // Set GICP information matrix
+    submap.submap_lc_info_.setZero();
+    //auto info_diag = Eigen::Map<Eigen::Vector4d>(config["gicp_info_diag"].as<std::vector<double>>().data());
+    auto gicp_info_diag = config["gicp_info_diag"].as<std::vector<double>>();
+    auto info_diag = Eigen::Map<Eigen::Vector4d>(gicp_info_diag.data());
+    submap.submap_lc_info_.bottomRightCorner(4, 4) = info_diag.asDiagonal();
+
+    double xy_edge_info = 1/std::pow(final_rms_error, 2);
+    Matrix2d lc_info_xy{
+       {xy_edge_info, 0},
+       {0, xy_edge_info}
+    };
+    submap.submap_lc_info_.topLeftCorner(2, 2) = lc_info_xy;
+    return rel_tf;
 }
 
 SubmapsVec BathySlam::runOffline(SubmapsVec& submaps_gt, GaussianGen& transSampler, GaussianGen& rotSampler, YAML::Node config){
@@ -103,8 +141,30 @@ SubmapsVec BathySlam::runOffline(SubmapsVec& submaps_gt, GaussianGen& transSampl
         }
 
         SubmapObj submap_final(dr_noise);
+        submap_final = submap_i;
         if (config["load_offline_LC"].as<bool>()) {
-            submap_final = submap_i;
+            if (!submap_i.overlaps_idx_.empty()) {
+                saveLCtoText(submap_i, fileOutputStream);
+
+                for (SubmapObj submap_j : submaps_reg) {
+                    if(find(submap_i.overlaps_idx_.begin(), submap_i.overlaps_idx_.end(), submap_j.submap_id_)
+                            != submap_i.overlaps_idx_.end()){
+                        string lc_filepath = config["offline_LC_folder"].as<string>()
+                                            + "submap_" + to_string(submap_i.submap_id_)
+                                            + "-" + "submap_" + to_string(submap_j.submap_id_)
+                                            + ".yaml";
+                        Isometry3f rel_tf = loadLCFromFile(submap_final, lc_filepath, config);
+                        graph_obj_->edge_covs_type_ = config["lc_edge_covs_type"].as<int>();
+                        graph_obj_->createLCEdge(submap_final, submap_j);
+
+                        // Transform the submap pose & point cloud TF back to before the LC (i.e. to the DR tf)
+                        submap_final.submap_tf_ = rel_tf.inverse() * submap_final.submap_tf_;
+                        pcl::transformPointCloud(submap_final.submap_pcl_, submap_final.submap_pcl_, rel_tf.inverse());
+                        submap_final.submap_lc_info_.setZero();
+                    }
+                }
+            }
+
         } else {
             submap_final = findLoopClosureByCombiningOverlappingSubmaps(
                 submap_i, fileOutputStream, submap_trg, submaps_reg,

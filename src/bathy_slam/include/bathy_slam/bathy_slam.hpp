@@ -30,7 +30,7 @@ public:
         GaussianGen& rotSampler,
         double info_thres=0.1);
     void saveLCtoText(SubmapObj& submap_i, ofstream& fileOutputStream);
-    SubmapObj loadLCFromFile();
+    Isometry3f loadLCFromFile(SubmapObj& submap, const string& filepath, const YAML::Node& config);
 };
 
 
