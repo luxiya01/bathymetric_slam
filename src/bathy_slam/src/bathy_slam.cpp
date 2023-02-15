@@ -1,7 +1,7 @@
 #include "bathy_slam/bathy_slam.hpp"
 
-BathySlam::BathySlam(GraphConstructor &graph_obj, SubmapRegistration &gicp_reg):
-    graph_obj_(&graph_obj), gicp_reg_(&gicp_reg){
+BathySlam::BathySlam(GraphConstructor &graph_obj, SubmapRegistration &gicp_reg, benchmark::track_error_benchmark& benchmark):
+    graph_obj_(&graph_obj), gicp_reg_(&gicp_reg), benchmark_(&benchmark) {
 
 }
 
@@ -142,18 +142,27 @@ SubmapsVec BathySlam::runOffline(SubmapsVec& submaps_gt, GaussianGen& transSampl
 
         SubmapObj submap_final(dr_noise);
         submap_final = submap_i;
-        if (config["load_offline_LC"].as<bool>()) {
+        if (config["online_LC_combine_overlapping_submaps"].as<bool>()) {
+            submap_final = findLoopClosureByCombiningOverlappingSubmaps(
+                submap_i, fileOutputStream, submap_trg, submaps_reg,
+                dr_noise, config, transSampler, rotSampler);
+        } else {
             if (!submap_i.overlaps_idx_.empty()) {
                 saveLCtoText(submap_i, fileOutputStream);
 
                 for (SubmapObj submap_j : submaps_reg) {
                     if(find(submap_i.overlaps_idx_.begin(), submap_i.overlaps_idx_.end(), submap_j.submap_id_)
                             != submap_i.overlaps_idx_.end()){
-                        string lc_filepath = config["offline_LC_folder"].as<string>()
-                                            + "submap_" + to_string(submap_i.submap_id_)
-                                            + "-" + "submap_" + to_string(submap_j.submap_id_)
-                                            + ".yaml";
-                        Isometry3f rel_tf = loadLCFromFile(submap_final, lc_filepath, config);
+                        Isometry3f rel_tf = Isometry3f::Identity();
+                        if (config["load_offline_LC"].as<bool>()) {
+                            string lc_filepath = config["offline_LC_folder"].as<string>()
+                                                + "submap_" + to_string(submap_i.submap_id_)
+                                                + "-" + "submap_" + to_string(submap_j.submap_id_)
+                                                + ".yaml";
+                            rel_tf = loadLCFromFile(submap_final, lc_filepath, config);
+                        } else {
+                            // Compute GICP for each individual submap pairs online
+                        }
                         graph_obj_->edge_covs_type_ = config["lc_edge_covs_type"].as<int>();
                         graph_obj_->createLCEdge(submap_final, submap_j);
 
@@ -164,11 +173,6 @@ SubmapsVec BathySlam::runOffline(SubmapsVec& submaps_gt, GaussianGen& transSampl
                     }
                 }
             }
-
-        } else {
-            submap_final = findLoopClosureByCombiningOverlappingSubmaps(
-                submap_i, fileOutputStream, submap_trg, submaps_reg,
-                dr_noise, config, transSampler, rotSampler);
         }
         submaps_reg.push_back(submap_final);    // Add registered submap_i
 

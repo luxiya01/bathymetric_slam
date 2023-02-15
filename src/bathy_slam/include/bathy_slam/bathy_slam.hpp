@@ -14,8 +14,9 @@ public:
 
     GraphConstructor* graph_obj_;
     SubmapRegistration* gicp_reg_;
+    benchmark::track_error_benchmark* benchmark_;
 
-    BathySlam(GraphConstructor& graph_obj, SubmapRegistration& gicp_reg);
+    BathySlam(GraphConstructor& graph_obj, SubmapRegistration& gicp_reg, benchmark::track_error_benchmark& benchmark);
     ~BathySlam();
 
     SubmapsVec runOffline(SubmapsVec &submaps_gt, GaussianGen &transSampler, GaussianGen &rotSampler, YAML::Node config);

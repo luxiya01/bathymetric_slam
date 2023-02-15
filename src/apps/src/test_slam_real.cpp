@@ -64,14 +64,14 @@ void benchmark_gt(SubmapsVec& submaps_gt, benchmark::track_error_benchmark& benc
 }
 
 SubmapsVec build_bathymetric_graph(GraphConstructor& graph_obj, SubmapsVec& submaps_gt,
-GaussianGen& transSampler, GaussianGen& rotSampler, YAML::Node config) {
+GaussianGen& transSampler, GaussianGen& rotSampler, YAML::Node config, benchmark::track_error_benchmark& benchmark) {
 
     // GICP reg for submaps
     SubmapRegistration gicp_reg(config);
 
     // Create SLAM solver and run offline
     std::cout << "Building bathymetric graph with GICP submap registration" << std::endl;
-    BathySlam slam_solver(graph_obj, gicp_reg);
+    BathySlam slam_solver(graph_obj, gicp_reg, benchmark);
     SubmapsVec submaps_reg = slam_solver.runOffline(submaps_gt, transSampler, rotSampler, config);
     std::cout << "Done building graph, press space to continue" << std::endl;
     return submaps_reg;
@@ -234,7 +234,7 @@ int main(int argc, char** argv){
             case 1:
                 // Benchmark GT
                 benchmark_gt(submaps_gt, benchmark);
-                submaps_reg = build_bathymetric_graph(graph_obj, submaps_gt, transSampler, rotSampler, config);
+                submaps_reg = build_bathymetric_graph(graph_obj, submaps_gt, transSampler, rotSampler, config, benchmark);
                 visualizer->updateVisualizer(submaps_reg);
                 // Benchmark GT after GICP, the GT submaps have now been moved due to GICP registration
                 add_benchmark(submaps_gt, benchmark, "1_After_GICP_GT");
