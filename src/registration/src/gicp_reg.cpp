@@ -43,9 +43,12 @@ SubmapRegistration::~SubmapRegistration(){
 void SubmapRegistration::loadConfig(YAML::Node config){
     gicp_.setMaxCorrespondenceDistance(config["gicp_max_correspondence_distance"].as<double>());
     gicp_.setMaximumIterations(config["gicp_maximum_iterations"].as<int>());
+    gicp_.setMaximumOptimizerIterations(config["gicp_maximum_optimizer_iterations"].as<int>());
+    gicp_.setRANSACIterations(config["gicp_ransac_iterations"].as<int>());
+    gicp_.setRANSACOutlierRejectionThreshold(config["gicp_ransac_outlier_rejection_threshold"].as<double>());
     gicp_.setTransformationEpsilon(config["gicp_transform_epsilon"].as<double>());
     gicp_.setEuclideanFitnessEpsilon(config["gicp_euclidean_fitness_epsilon"].as<double>());
-    gicp_.setRANSACOutlierRejectionThreshold(config["gicp_ransac_outlier_rejection_threshold"].as<double>());
+
     normal_use_knn_search = config["gicp_normal_use_knn_search"].as<bool>();
     normal_search_radius = config["gicp_normal_search_radius"].as<double>();
     normal_search_k_neighbours = config["gicp_normal_search_k_neighbours"].as<int>();
@@ -67,6 +70,16 @@ SubmapObj SubmapRegistration::constructTrgSubmap(const SubmapsVec& submaps_set, 
     return submap_trg;
 }
 
+void SubmapRegistration::transformSubmap(SubmapObj& submap, const Matrix4f& relative_tf){
+
+    // Apply tranform to submap frame
+    Isometry3f rel_tf = Isometry3f (Isometry3f(Translation3f(relative_tf.block<3,1>(0,3)))*
+                                    Isometry3f(Quaternionf(relative_tf.block<3,3>(0,0)).normalized()));
+
+    submap.submap_tf_ = rel_tf * submap.submap_tf_;
+}
+
+
 void SubmapRegistration::transformSubmap(SubmapObj& submap){
 
     // Apply tranform to submap frame
@@ -84,10 +97,12 @@ double SubmapRegistration::consistencyErrorOverlap(const SubmapObj& trg_submap,
     submaps.push_back(trg_submap.submap_pcl_.getMatrixXfMap(3,4,0).transpose().cast<double>());
     submaps.push_back(src_submap.submap_pcl_.getMatrixXfMap(3,4,0).transpose().cast<double>());
 
-    Eigen::MatrixXd error_vals;
-    double consistency_rms_error;
     std::vector<std::vector<std::vector<MatrixXd>>> grid_maps = benchmark_.create_grids_from_matrices(submaps);
-    tie(consistency_rms_error, error_vals) = benchmark_.compute_consistency_error(grid_maps);
+    double consistency_rms_error;
+    int nbr_rows = grid_maps.size();
+    int nbr_cols = grid_maps[0].size();
+    Eigen::MatrixXd error_vals(nbr_rows, nbr_cols); error_vals.setZero();
+    consistency_rms_error = benchmark_.compute_consistency_error(grid_maps, error_vals);
 
     return (consistency_rms_error);
 
@@ -190,7 +205,7 @@ bool SubmapRegistration::gicpSubmapRegistration(SubmapObj& trg_submap, SubmapObj
 }
 
 
-bool SubmapRegistration::gicpSubmapRegistrationSimple(SubmapObj& trg_submap, SubmapObj& src_submap){
+Matrix4f SubmapRegistration::gicpSubmapRegistrationSimple(const SubmapObj& trg_submap, SubmapObj& src_submap){
 
     // Copy the originals to work over them
     PointCloudT::Ptr src_pcl_ptr (new PointCloudT(src_submap.submap_pcl_));
@@ -205,16 +220,8 @@ bool SubmapRegistration::gicpSubmapRegistrationSimple(SubmapObj& trg_submap, Sub
     ret_tf_ =  gicp_.getFinalTransformation();
     this->transformSubmap(src_submap);
 
-    // Check for nan values
-    for(int x=0; x<src_submap.submap_lc_info_.array().size(); x++){
-        if(isnan(src_submap.submap_lc_info_.array()(x))){
-            throw std::runtime_error("Nan components in the matrix");
-            std::exit(0);
-        }
-    }
-
-    // TODO: compute this value properly
-    bool convergence = (gicp_.hasConverged())? true: false;
-    return convergence;
+    cout << "GICP converged? " << gicp_.hasConverged() << endl;
+    cout << "Fitness score: " << gicp_.getFitnessScore(gicp_.getMaxCorrespondenceDistance()) << endl;
+    return ret_tf_;
 }
 

@@ -3,9 +3,13 @@ project(uw_slam_projects)
 
 # check c++14 / c++0x
 include(CheckCXXCompilerFlag)
+CHECK_CXX_COMPILER_FLAG("-std=c++17" COMPILER_SUPPORTS_CXX17)
 CHECK_CXX_COMPILER_FLAG("-std=c++14" COMPILER_SUPPORTS_CXX14)
 CHECK_CXX_COMPILER_FLAG("-std=c++11" COMPILER_SUPPORTS_CXX11)
-if(COMPILER_SUPPORTS_CXX14)
+if(COMPILER_SUPPORTS_CXX17)
+    set(CMAKE_CXX_FLAGS "-std=c++17 -O2 -fPIC")
+     add_compile_options(-std=c++17 -Wall -Wextra)
+elseif(COMPILER_SUPPORTS_CXX14)
     set(CMAKE_CXX_FLAGS "-std=c++14 -O3 -fPIC")
      add_compile_options(-std=c++14 -Wall -Wextra)
 elseif(COMPILER_SUPPORTS_CXX0X)
@@ -19,7 +23,7 @@ endif()
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99 -O3 -fPIC")
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set( CMAKE_BUILD_TYPE "Release" )
+set(CMAKE_BUILD_TYPE "Debug" )
 
 # Must use GNUInstallDirs to install libraries into correct
 # locations on all platforms.

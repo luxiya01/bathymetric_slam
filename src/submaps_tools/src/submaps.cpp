@@ -382,6 +382,122 @@ SubmapsVec createSubmaps(SubmapsVec& pings, int submap_size, const DRNoise& dr_n
     return submaps_vec;
 }
 
+SubmapsVec createSubmapsWithMaximizedOverlap(SubmapsVec& pings, int submap_size, const DRNoise& dr_noise, float thresh){
+
+    SubmapsVec submaps_vec;
+    std::vector<Eigen::Isometry3f, Eigen::aligned_allocator<Eigen::Isometry3f>> pings_tfs;
+    Eigen::MatrixXd* auv_track = new Eigen::MatrixXd;
+    int cnt = 0;
+    int submap_cnt = 0;
+    int swath_cnt = 0;
+    int ping_idx = -1;
+
+    int min_submaps_between_turns = 5;
+    int num_submaps_after_last_turn = 0;
+    bool start_to_turn = false;
+    bool turning = false;
+    double x_lim = 0.;
+    bool wait_until_x_smaller_than_x_lim = false;
+
+    SubmapObj* submap_k = new SubmapObj(dr_noise);
+    for (SubmapObj& ping_i: pings) {
+        ping_idx += 1;
+
+        submap_k->submap_pcl_ += ping_i.submap_pcl_;
+        pings_tfs.push_back(ping_i.submap_tf_);
+        if(auv_track->rows() < cnt + 1){
+            auv_track->conservativeResize(auv_track->rows() + 1, 3);
+        }
+        auv_track->row(cnt) = submap_k->submap_tf_.translation().array().transpose().cast<double>();
+        cnt++;
+
+        if (!turning && num_submaps_after_last_turn >= min_submaps_between_turns) {
+            // compute whether start_to_turn
+            auto curr_dir = compute_euler_angle(&pings[ping_idx + 50], &ping_i);
+            start_to_turn = (std::abs(curr_dir(2)) > thresh);
+        }
+
+        if (start_to_turn) {
+            x_lim = pings_tfs.at(0).translation().x();
+            if (ping_i.submap_tf_.translation().x() > x_lim) {
+                wait_until_x_smaller_than_x_lim = true;
+            } else {
+                wait_until_x_smaller_than_x_lim = false;
+            }
+            turning = true;
+            start_to_turn = false;
+        }
+
+        // Create a new submap if:
+        // 1. turning ends
+        // 2. turning = false and cnt reaches submap_size
+        if (turning) {
+            double x_curr = ping_i.submap_tf_.translation().x();
+            if (turning_ends(x_lim, x_curr, wait_until_x_smaller_than_x_lim)) {
+                turning = false;
+                // Create submap
+                // TODO: refactor into a new function
+                submap_k->submap_id_ = submap_cnt;
+                submap_k->submap_tf_ = pings_tfs.at(cnt/2);
+                cnt = 0;
+                pings_tfs.clear();
+                submap_k->auv_tracks_ = *auv_track;
+                delete auv_track;
+                auv_track = new Eigen::MatrixXd();
+
+                submap_cnt++;
+                submap_k->swath_id_ = swath_cnt;
+
+                submaps_vec.push_back(*submap_k);
+                delete submap_k;
+                submap_k = new SubmapObj(dr_noise);
+                // Increment swath count after the turning submap
+                swath_cnt++;
+                num_submaps_after_last_turn = 0;
+            }
+        } else if (cnt > submap_size) {
+            // Create submap
+            // TODO: refactor into a new function
+            cnt = 0;
+            submap_k->submap_id_ = submap_cnt;
+            submap_k->submap_tf_ = pings_tfs.at(submap_size/2);
+            pings_tfs.clear();
+            submap_k->auv_tracks_ = *auv_track;
+            delete auv_track;
+            auv_track = new Eigen::MatrixXd();
+
+            submap_cnt++;
+            submap_k->swath_id_ = swath_cnt;
+
+            submaps_vec.push_back(*submap_k);
+            delete submap_k;
+            submap_k = new SubmapObj(dr_noise);
+            num_submaps_after_last_turn++;
+        }
+    }
+    return submaps_vec;
+}
+
+bool turning_ends(double x_lim, double x_curr, bool wait_until_x_smaller_than_x_lim) {
+    if (wait_until_x_smaller_than_x_lim) {
+        if (x_curr < x_lim) {
+            return true;
+        }
+    } else {
+        if (x_curr > x_lim) {
+            return true;
+        }
+    }
+    return false;
+}
+
+Eigen::Vector3f compute_euler_angle(const SubmapObj* submap_k, const SubmapObj* submap_prev) {
+    Eigen::Quaternionf rot_k = Eigen::Quaternionf(submap_k->submap_tf_.linear());
+    Eigen::Quaternionf rot_prev = Eigen::Quaternionf(submap_prev->submap_tf_.linear());
+    auto euler = (rot_k * rot_prev.inverse()).toRotationMatrix().eulerAngles(0,1,2);
+    return euler;
+}
+
 SubmapsVec createMap(SubmapsVec& pings, int submap_size, const DRNoise& dr_noise){
 
     SubmapsVec submaps_vec;

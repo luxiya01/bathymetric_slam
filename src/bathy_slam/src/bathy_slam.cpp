@@ -50,9 +50,25 @@ SubmapObj BathySlam::findLoopClosureByCombiningOverlappingSubmaps(
 
         // Create loop closures
         graph_obj_->edge_covs_type_ = config["lc_edge_covs_type"].as<int>();
-        graph_obj_->findLoopClosures(submap_final, submaps_reg, info_thres);
+        graph_obj_->findLoopClosures(submap_final, submaps_reg, info_thres, config["filter_non_adjacent_line_overlaps"].as<bool>());
     }
     return submap_final;
+}
+
+void BathySlam::setLCInfo(SubmapObj& submap, double final_rms_error, const YAML::Node& config) {
+    // Set GICP information matrix
+    submap.submap_lc_info_.setZero();
+    //auto info_diag = Eigen::Map<Eigen::Vector4d>(config["gicp_info_diag"].as<std::vector<double>>().data());
+    auto gicp_info_diag = config["gicp_info_diag"].as<std::vector<double>>();
+    auto info_diag = Eigen::Map<Eigen::Vector4d>(gicp_info_diag.data());
+    submap.submap_lc_info_.bottomRightCorner(4, 4) = info_diag.asDiagonal();
+
+    double xy_edge_info = 1/std::pow(final_rms_error, 2);
+    Matrix2d lc_info_xy{
+       {xy_edge_info, 0},
+       {0, xy_edge_info}
+    };
+    submap.submap_lc_info_.topLeftCorner(2, 2) = lc_info_xy;
 }
 
 Isometry3f BathySlam::loadLCFromFile(SubmapObj& submap, const string& filepath, const YAML::Node& config) {
@@ -81,21 +97,78 @@ Isometry3f BathySlam::loadLCFromFile(SubmapObj& submap, const string& filepath, 
 
     submap.submap_tf_ = rel_tf * submap.submap_tf_;
     pcl::transformPointCloud(submap.submap_pcl_, submap.submap_pcl_, rel_tf);
+    setLCInfo(submap, final_rms_error, config);
 
-    // Set GICP information matrix
-    submap.submap_lc_info_.setZero();
-    //auto info_diag = Eigen::Map<Eigen::Vector4d>(config["gicp_info_diag"].as<std::vector<double>>().data());
-    auto gicp_info_diag = config["gicp_info_diag"].as<std::vector<double>>();
-    auto info_diag = Eigen::Map<Eigen::Vector4d>(gicp_info_diag.data());
-    submap.submap_lc_info_.bottomRightCorner(4, 4) = info_diag.asDiagonal();
-
-    double xy_edge_info = 1/std::pow(final_rms_error, 2);
-    Matrix2d lc_info_xy{
-       {xy_edge_info, 0},
-       {0, xy_edge_info}
-    };
-    submap.submap_lc_info_.topLeftCorner(2, 2) = lc_info_xy;
     return rel_tf;
+}
+
+Isometry3f BathySlam::onlineGicp(SubmapObj& submap_from, const SubmapObj& submap_to, const YAML::Node& config) {
+    SubmapsVec submap_pair;
+    submap_pair.push_back(submap_from);
+    submap_pair.push_back(submap_to);
+    PointsT submap_pair_matrix = pclToMatrixSubmap(submap_pair);
+    string pair_name = "submap_" + std::to_string(submap_from.submap_id_) + "-submap_" + std::to_string(submap_to.submap_id_);
+    string init_benchmark = pair_name + "_init";
+    benchmark_->track_img_params(submap_pair_matrix);
+    benchmark_->add_benchmark(submap_pair_matrix, submap_pair_matrix, init_benchmark);
+
+    Matrix4f final_transform = Matrix4f::Identity();
+    int max_iterations = config["gicp_max_iterations"].as<int>();
+    int gicp_iteration = 0;
+    double min_rms = benchmark_->consistency_rms_errors[init_benchmark];
+    string min_benchmark_name = init_benchmark;
+
+    while (gicp_iteration < max_iterations) {
+        Matrix4f gicp_tf = gicp_reg_->gicpSubmapRegistrationSimple(submap_to, submap_from);
+        string gicp_benchmark = pair_name + "_gicp_" + std::to_string(gicp_iteration);
+        benchmark_->add_benchmark(submap_pair_matrix, submap_pair_matrix, gicp_benchmark);
+        if (benchmark_->consistency_rms_errors[gicp_benchmark] >= min_rms) {
+            gicp_reg_->transformSubmap(submap_from, gicp_tf.inverse());
+            pcl::transformPointCloud(submap_from.submap_pcl_, submap_from.submap_pcl_, gicp_tf.inverse());
+            break;
+        }
+        min_rms = benchmark_->consistency_rms_errors[gicp_benchmark];
+        min_benchmark_name = gicp_benchmark;
+        final_transform *= gicp_tf;
+        gicp_iteration++;
+    }
+
+    if (benchmark_->consistency_rms_errors[min_benchmark_name] >= config["offline_LC_max_rms"].as<double>()
+    ) {
+        gicp_reg_->transformSubmap(submap_from, final_transform.inverse());
+        pcl::transformPointCloud(submap_from.submap_pcl_, submap_from.submap_pcl_, final_transform.inverse());
+        return Isometry3f::Identity();
+    }
+    setLCInfo(submap_from, benchmark_->consistency_rms_errors[min_benchmark_name], config);
+    
+    ofstream out_file(pair_name + ".yaml");
+    // Write GICP results to file
+    if (out_file.is_open()) {
+        out_file << "no_gicp_iterations: " << gicp_iteration << endl;
+        out_file << "rms_error:\n" 
+                    << "  init: " << benchmark_->consistency_rms_errors[init_benchmark] << endl
+                    << "  final: " <<benchmark_->consistency_rms_errors[min_benchmark_name] << endl;
+        out_file << "std_all:\n"
+                    << "  init: " << benchmark_->std_grids_with_hits[init_benchmark] << endl
+                    << "  final: " << benchmark_->std_grids_with_hits[min_benchmark_name] << endl;
+        out_file << "std_overlap:\n"
+                    << "  init: " << benchmark_->std_grids_with_overlaps[init_benchmark] << endl
+                    << "  final: " << benchmark_->std_grids_with_overlaps[min_benchmark_name] << endl;
+        out_file << "transform: [";
+        int num = 0;
+        for (float tf : final_transform.reshaped<RowMajor>()) {
+            out_file << tf;
+            if (num < final_transform.size()-1) {
+                out_file << ", ";
+            } else {
+                out_file << "]" << endl;
+            }
+            num ++;
+        }
+    }
+    Isometry3f final_tf_isometry = Isometry3f (Isometry3f(Translation3f(final_transform.block<3,1>(0,3)))*
+                                    Isometry3f(Quaternionf(final_transform.block<3,3>(0,0)).normalized()));
+    return final_tf_isometry;
 }
 
 SubmapsVec BathySlam::runOffline(SubmapsVec& submaps_gt, GaussianGen& transSampler, GaussianGen& rotSampler, YAML::Node config){
@@ -161,7 +234,9 @@ SubmapsVec BathySlam::runOffline(SubmapsVec& submaps_gt, GaussianGen& transSampl
                                                 + ".yaml";
                             rel_tf = loadLCFromFile(submap_final, lc_filepath, config);
                         } else {
-                            // Compute GICP for each individual submap pairs online
+                            cout << "Compute GICP online for each individual submap pair..." << endl;
+                            // Compute GICP for online each individual submap pair
+                            rel_tf = onlineGicp(submap_final, submap_j, config);
                         }
                         graph_obj_->edge_covs_type_ = config["lc_edge_covs_type"].as<int>();
                         graph_obj_->createLCEdge(submap_final, submap_j);

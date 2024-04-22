@@ -127,12 +127,18 @@ void GraphConstructor::createLCEdge(const SubmapObj& submap_from, const SubmapOb
 
 
 void GraphConstructor::findLoopClosures(SubmapObj& submap_i, const SubmapsVec& submaps_set,
-                                        double info_thres){
+                                        double info_thres, bool filter_non_adjacent_line_overlaps){
 
     // Check all submaps in overlaps vector
     for(SubmapObj submap_j: submaps_set){
         if(find(submap_i.overlaps_idx_.begin(), submap_i.overlaps_idx_.end(), submap_j.submap_id_)
                 != submap_i.overlaps_idx_.end()){
+            // Skip the overlap if the submaps are on two adjacent survey lines (i.e. swath id differ by maximum 1)
+            if (filter_non_adjacent_line_overlaps) {
+                if (std::abs(submap_i.swath_id_ - submap_j.swath_id_) > 1) {
+                    continue;
+                }
+            }
             this->createLCEdge(submap_i, submap_j);
         }
     }

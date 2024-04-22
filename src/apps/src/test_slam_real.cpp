@@ -64,14 +64,16 @@ void benchmark_gt(SubmapsVec& submaps_gt, benchmark::track_error_benchmark& benc
 }
 
 SubmapsVec build_bathymetric_graph(GraphConstructor& graph_obj, SubmapsVec& submaps_gt,
-GaussianGen& transSampler, GaussianGen& rotSampler, YAML::Node config, benchmark::track_error_benchmark& benchmark) {
+GaussianGen& transSampler, GaussianGen& rotSampler, YAML::Node config) {
 
     // GICP reg for submaps
     SubmapRegistration gicp_reg(config);
 
     // Create SLAM solver and run offline
     std::cout << "Building bathymetric graph with GICP submap registration" << std::endl;
-    BathySlam slam_solver(graph_obj, gicp_reg, benchmark);
+    benchmark::track_error_benchmark gicp_benchmark = benchmark::track_error_benchmark("GICP", config["gicp_benchmark_nbr_rows"].as<int>(),
+        config["gicp_benchmark_nbr_cols"].as<int>());
+    BathySlam slam_solver(graph_obj, gicp_reg, gicp_benchmark);
     SubmapsVec submaps_reg = slam_solver.runOffline(submaps_gt, transSampler, rotSampler, config);
     std::cout << "Done building graph, press space to continue" << std::endl;
     return submaps_reg;
@@ -164,7 +166,12 @@ int main(int argc, char** argv){
         {
             SubmapsVec traj_pings = parsePingsAUVlib(std_pings, dr_noise);
             int submap_size = config["submap_size"].as<int>();
-            submaps_gt = createSubmaps(traj_pings, submap_size, dr_noise);
+            if (config["create_submap_with_maximized_overlap"].as<bool>()) {
+                float turning_thresh = config["submap_segmentation_turning_thresh"].as<float>();
+                submaps_gt = createSubmapsWithMaximizedOverlap(traj_pings, submap_size, dr_noise, turning_thresh);
+            } else{
+                submaps_gt = createSubmaps(traj_pings, submap_size, dr_noise);
+            }
 
             // Filtering of submaps
             PointCloudT::Ptr cloud_ptr (new PointCloudT);
@@ -234,7 +241,7 @@ int main(int argc, char** argv){
             case 1:
                 // Benchmark GT
                 benchmark_gt(submaps_gt, benchmark);
-                submaps_reg = build_bathymetric_graph(graph_obj, submaps_gt, transSampler, rotSampler, config, benchmark);
+                submaps_reg = build_bathymetric_graph(graph_obj, submaps_gt, transSampler, rotSampler, config);
                 visualizer->updateVisualizer(submaps_reg);
                 // Benchmark GT after GICP, the GT submaps have now been moved due to GICP registration
                 add_benchmark(submaps_gt, benchmark, "1_After_GICP_GT");

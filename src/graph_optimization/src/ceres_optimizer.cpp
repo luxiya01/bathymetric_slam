@@ -211,6 +211,7 @@ MapOfPoses ceresSolver(const std::string& outFilename, const int drConstraints){
 
     CHECK(ceres::optimizer::ReadG2oFile(outFilename, &poses, &constraints))
         << "Error reading the file: " << outFilename;
+    std::cout << "!!!\n No constraints: " << constraints.size() << "!!!" << std::endl;
 
     CHECK(ceres::optimizer::OutputPoses("poses_corrupted.txt", poses))
         << "Error outputting to poses_corrupted.txt";

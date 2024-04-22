@@ -32,6 +32,8 @@ public:
         double info_thres=0.1);
     void saveLCtoText(SubmapObj& submap_i, ofstream& fileOutputStream);
     Isometry3f loadLCFromFile(SubmapObj& submap, const string& filepath, const YAML::Node& config);
+    Isometry3f onlineGicp(SubmapObj& submap_from, const SubmapObj& submap_to, const YAML::Node& config);
+    void setLCInfo(SubmapObj& submap, double final_rms_error, const YAML::Node& config);
 };
 
 

@@ -56,7 +56,7 @@ public:
     void saveG2OFile(std::string outFilename);
 
     void findLoopClosures(SubmapObj &submap_i,
-                          const SubmapsVec& submaps_set, double info_thres);
+                          const SubmapsVec& submaps_set, double info_thres, bool filter_non_adjacent_line_overlaps);
 
     void createLCEdge(const SubmapObj& submap_from, const SubmapObj& submap_to);
 

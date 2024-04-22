@@ -124,6 +124,12 @@ SubmapsVec parsePingsAUVlib(std_data::mbes_ping::PingsT& pings, const DRNoise& d
 SubmapsVec createSubmaps(SubmapsVec& pings, int submap_size, const DRNoise& dr_noise); 
 SubmapsVec createMap(SubmapsVec& pings, int submap_size, const DRNoise& dr_noise);
 
+// Begin create submaps with maximized overlap
+SubmapsVec createSubmapsWithMaximizedOverlap(SubmapsVec& pings, int submap_size, const DRNoise& dr_noise, float thresh);
+Eigen::Vector3f compute_euler_angle(const SubmapObj* submap_k, const SubmapObj* submap_prev);
+bool turning_ends(double x_lim, double x_curr, bool wait_until_x_smaller_than_x_lim);
+// End create submaps with maximized overlap
+
 void transformSubmapObj(SubmapObj& submap, Isometry3f& poseDRt);
 
 std::pair<int, corners> getSubmapCorners(bool submaps_in_map_tf, const SubmapObj& submap, double overlap_coverage);
